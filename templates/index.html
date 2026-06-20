@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>UAFT Q&amp;A</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;600;700&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap"
+    rel="stylesheet"
+  />
+  <style>
+    :root {
+      --bg: #FAFAF8;
+      --accent: #2C5F7C;
+      --text: #1f2933;
+      --muted: #6b7280;
+      --maxw: 760px;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Source Serif 4", Georgia, serif;
+      font-size: 18px;
+      line-height: 1.65;
+      -webkit-font-smoothing: antialiased;
+    }
+    .wrap {
+      max-width: var(--maxw);
+      margin: 0 auto;
+      padding: 56px 24px 96px;
+    }
+    h1, h2, h3, label, button {
+      font-family: "Source Sans 3", -apple-system, system-ui, sans-serif;
+    }
+    h1 {
+      color: var(--accent);
+      font-weight: 700;
+      font-size: 2rem;
+      margin: 0 0 6px;
+      letter-spacing: -0.01em;
+    }
+    .sub {
+      color: var(--muted);
+      font-family: "Source Sans 3", system-ui, sans-serif;
+      font-size: 0.95rem;
+      margin: 0 0 32px;
+    }
+    form { margin: 0 0 28px; }
+    label {
+      display: block;
+      font-weight: 600;
+      font-size: 0.9rem;
+      color: var(--accent);
+      margin-bottom: 8px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    textarea {
+      width: 100%;
+      min-height: 96px;
+      resize: vertical;
+      padding: 14px 16px;
+      border: 1px solid #d8d6cf;
+      border-radius: 10px;
+      background: #fff;
+      font-family: "Source Serif 4", Georgia, serif;
+      font-size: 1.05rem;
+      line-height: 1.5;
+      color: var(--text);
+    }
+    textarea:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(44, 95, 124, 0.15);
+    }
+    .row {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin-top: 14px;
+    }
+    button {
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: 10px;
+      padding: 12px 22px;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.15s ease;
+    }
+    button:hover { opacity: 0.92; }
+    button:disabled { opacity: 0.55; cursor: default; }
+    .hint {
+      color: var(--muted);
+      font-family: "Source Sans 3", system-ui, sans-serif;
+      font-size: 0.85rem;
+    }
+    .answer {
+      margin-top: 28px;
+      padding: 24px 26px;
+      background: #fff;
+      border: 1px solid #e7e5dd;
+      border-left: 4px solid var(--accent);
+      border-radius: 10px;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+    }
+    .answer.error {
+      border-left-color: #b4541f;
+      color: #7a3a14;
+    }
+    .answer.loading { color: var(--muted); font-style: italic; }
+    .hidden { display: none; }
+    footer {
+      margin-top: 48px;
+      color: var(--muted);
+      font-family: "Source Sans 3", system-ui, sans-serif;
+      font-size: 0.8rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>UAFT&nbsp;Q&amp;A</h1>
+    <p class="sub">Ask a question about the Unified Affective Field Theory framework.</p>
+
+    <form id="ask-form">
+      <label for="question">Your question</label>
+      <textarea
+        id="question"
+        name="question"
+        placeholder="e.g. What is the pinch point in UAFT?"
+        autofocus
+      ></textarea>
+      <div class="row">
+        <button type="submit" id="submit-btn">Ask</button>
+        <span class="hint">Answers are grounded only in the UAFT papers.</span>
+      </div>
+    </form>
+
+    <div id="answer" class="answer hidden"></div>
+
+    <footer>Grounded retrieval over the UAFT corpus. Answers may be incomplete; consult the source papers for detail.</footer>
+  </div>
+
+  <script>
+    const form = document.getElementById("ask-form");
+    const input = document.getElementById("question");
+    const btn = document.getElementById("submit-btn");
+    const out = document.getElementById("answer");
+
+    function show(text, kind) {
+      out.className = "answer" + (kind ? " " + kind : "");
+      out.textContent = text;
+      out.classList.remove("hidden");
+    }
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const question = input.value.trim();
+      if (!question) {
+        show("Please enter a question.", "error");
+        return;
+      }
+      btn.disabled = true;
+      show("Thinking…", "loading");
+      try {
+        const resp = await fetch("/ask", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ question }),
+        });
+        const data = await resp.json();
+        if (data.error) {
+          show(data.error, "error");
+        } else {
+          show(data.answer, "");
+        }
+      } catch (err) {
+        show("Something went wrong reaching the server. Please try again.", "error");
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

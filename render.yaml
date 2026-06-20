@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: uaft-qa
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT
+    envVars:
+      # Set this value in the Render dashboard (do not commit it).
+      - key: OLLAMA_API_KEY
+        sync: false
+      # Optional overrides — defaults live in app.py.
+      - key: OLLAMA_MODEL
+        sync: false
+      - key: OLLAMA_BASE_URL
+        sync: false
+    healthCheckPath: /healthz
