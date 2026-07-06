@@ -6,12 +6,24 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn app:app --bind 0.0.0.0:$PORT
     envVars:
-      # Set this value in the Render dashboard (do not commit it).
+      # Set secret values in the Render dashboard (do not commit them).
+      # Standard engine (Gemma via Ollama Cloud) — at least this key is required.
       - key: OLLAMA_API_KEY
+        sync: false
+      # Comprehensive engine (OpenAI) — optional; enables auto-routing when set.
+      - key: OPENAI_API_KEY
         sync: false
       # Optional overrides — defaults live in app.py.
       - key: OLLAMA_MODEL
         sync: false
       - key: OLLAMA_BASE_URL
+        sync: false
+      - key: OPENAI_MODEL
+        sync: false
+      - key: OPENAI_BASE_URL
+        sync: false
+      - key: ROUTE_MODE
+        sync: false
+      - key: ROUTER_THRESHOLD
         sync: false
     healthCheckPath: /healthz

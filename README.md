@@ -20,16 +20,43 @@ and sends them to a cloud LLM (Gemma via Ollama Cloud's OpenAI-compatible API).
   filenames.
 - Source files are fetched over HTTPS and cached in memory after first fetch.
 
+## Two engines (standard + comprehensive)
+
+The app can use two LLMs and auto-route between them:
+
+- **Standard** — Gemma via Ollama Cloud. Handles most questions.
+- **Comprehensive** — the real OpenAI API, used for harder questions.
+
+An **auto-router** scores each question for "hardness" (depth/comparison words
+like *compare, relationship, implications, derive, why, how*; whether it spans
+two papers; length; multiple sub-questions). If the score reaches
+`ROUTER_THRESHOLD`, the question goes to OpenAI; otherwise to Gemma. Both engines
+get the same grounded context and the same "answer only from the sources" rule
+(the comprehensive engine also gets a "be thorough" nudge). The router decision
+is logged server-side; the UI still shows only the clean answer.
+
+If `OPENAI_API_KEY` is **not** set, the app behaves exactly as before (Gemma
+only). If a chosen engine fails, the app automatically falls back to the other
+configured engine before showing an error.
+
 ## Configuration
 
 The app reads these environment variables (the API key is **never** hardcoded):
 
 | Variable | Required | Default | Purpose |
 | --- | --- | --- | --- |
-| `OLLAMA_API_KEY` | **yes** | — | Ollama Cloud API key. Set it in the host's dashboard. |
-| `OLLAMA_MODEL` | no | `gemma4:31b-cloud` | Model tag to call. Override if the tag differs. |
-| `OLLAMA_BASE_URL` | no | `https://ollama.com/v1` | OpenAI-compatible base URL. |
+| `OLLAMA_API_KEY` | yes* | — | Ollama Cloud API key (standard engine). Set it in the host's dashboard. |
+| `OLLAMA_MODEL` | no | `gemma4:31b-cloud` | Standard model tag. Override if the tag differs. |
+| `OLLAMA_BASE_URL` | no | `https://ollama.com/v1` | OpenAI-compatible base URL for Ollama Cloud. |
+| `OPENAI_API_KEY` | no | — | OpenAI API key (comprehensive engine). If unset, only the standard engine is used. |
+| `OPENAI_MODEL` | no | `gpt-5.5` | OpenAI model for hard questions. Set to e.g. `gpt-5.4-mini` to conserve credits. |
+| `OPENAI_BASE_URL` | no | `https://api.openai.com/v1` | OpenAI chat-completions base URL. |
+| `ROUTE_MODE` | no | `auto` | `auto`, `standard` (always Gemma), or `comprehensive` (always OpenAI). |
+| `ROUTER_THRESHOLD` | no | `3` | Hardness score needed to route to OpenAI. Higher = fewer OpenAI calls. |
 | `PORT` | no | `5000` | Port to listen on (set automatically by Render). |
+
+\* At least one engine key is required. `OLLAMA_API_KEY` alone reproduces the
+original single-engine behavior; add `OPENAI_API_KEY` to enable auto-routing.
 
 On any model, key, or network failure the app returns a clear message and never
 crashes.

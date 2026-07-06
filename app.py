@@ -35,9 +35,25 @@ PAPERS = [
 
 # --- Model / API config (read from env; never hardcode the key) --------------
 
+# Standard engine: Gemma via Ollama Cloud (OpenAI-compatible).
 OLLAMA_API_KEY = os.environ.get("OLLAMA_API_KEY")
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "https://ollama.com/v1")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "gemma4:31b-cloud")
+
+# Comprehensive engine: the real OpenAI API, used for harder questions.
+# If OPENAI_API_KEY is unset, the app behaves exactly as before (Gemma only).
+# OPENAI_MODEL is overridable so you can match whatever your credits cover
+# (e.g. gpt-5.5 for hardest, gpt-5.4-mini to conserve credits).
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+OPENAI_BASE_URL = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
+OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-5.5")
+
+# Routing between the two engines:
+#   ROUTE_MODE = auto (default) | standard (always Gemma) | comprehensive (always OpenAI)
+#   ROUTER_THRESHOLD: higher = fewer questions sent to OpenAI (saves credits).
+ROUTE_MODE = os.environ.get("ROUTE_MODE", "auto").strip().lower()
+ROUTER_THRESHOLD = int(os.environ.get("ROUTER_THRESHOLD", "3"))
+
 REQUEST_TIMEOUT = 120  # seconds, for the LLM call
 
 SYSTEM_PROMPT = (
@@ -171,12 +187,20 @@ def match_papers(question, max_papers=2, min_score=2):
 
 # --- Prompt assembly + LLM call ----------------------------------------------
 
-def build_messages(question, master_text, paper_texts):
+def build_messages(question, master_text, paper_texts, thorough=False):
     sources = ["=== UAFT MASTER FILE ===", master_text]
     for text in paper_texts:
         sources.append("\n=== SUPPORTING PAPER ===")
         sources.append(text)
     sources_block = "\n".join(sources)
+
+    system = SYSTEM_PROMPT
+    if thorough:
+        system += (
+            " Be thorough and comprehensive: draw connections across the "
+            "provided sources and explain your reasoning step by step, while "
+            "staying strictly within what the sources support."
+        )
 
     user_content = (
         "Use the following UAFT source documents to answer the question.\n\n"
@@ -184,21 +208,39 @@ def build_messages(question, master_text, paper_texts):
         f"=== QUESTION ===\n{question}"
     )
     return [
-        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "system", "content": system},
         {"role": "user", "content": user_content},
     ]
 
 
-def ask_model(messages):
-    """Call Ollama Cloud's OpenAI-compatible chat endpoint."""
+# --- Engines + routing -------------------------------------------------------
+
+def _engines():
+    """The two engines. 'standard' = Gemma/Ollama, 'comprehensive' = OpenAI."""
+    return {
+        "standard": {
+            "base_url": OLLAMA_BASE_URL,
+            "api_key": OLLAMA_API_KEY,
+            "model": OLLAMA_MODEL,
+        },
+        "comprehensive": {
+            "base_url": OPENAI_BASE_URL,
+            "api_key": OPENAI_API_KEY,
+            "model": OPENAI_MODEL,
+        },
+    }
+
+
+def _chat_completion(engine, messages):
+    """Call any OpenAI-compatible chat endpoint (Ollama Cloud or OpenAI)."""
     resp = requests.post(
-        f"{OLLAMA_BASE_URL.rstrip('/')}/chat/completions",
+        f"{engine['base_url'].rstrip('/')}/chat/completions",
         headers={
-            "Authorization": f"Bearer {OLLAMA_API_KEY}",
+            "Authorization": f"Bearer {engine['api_key']}",
             "Content-Type": "application/json",
         },
         json={
-            "model": OLLAMA_MODEL,
+            "model": engine["model"],
             "messages": messages,
             "stream": False,
         },
@@ -209,52 +251,129 @@ def ask_model(messages):
     return data["choices"][0]["message"]["content"].strip()
 
 
-def answer_question(question):
-    """Full pipeline. Returns (answer, error_message). Never raises."""
-    if not question or not question.strip():
-        return None, "Please enter a question."
+# Words/phrases that signal a question wants depth, synthesis, or comparison.
+# ('why'/'how' are common, so the depth contribution is capped in route_engine.)
+_DEPTH_PATTERN = re.compile(
+    r"\b(compare|comparison|contrast|versus|vs|differ|differs|difference|"
+    r"differences|relationship|relate|relates|related|connection|connections|"
+    r"reconcile|synthesi\w+|integrate|integration|unify|unified|implication|"
+    r"implications|consequence|consequences|derive|derivation|prove|proof|"
+    r"mechanism|mechanisms|justify|critique|evaluate|analy[sz]e|analysis|"
+    r"trade-?off|across|comprehensive|in-depth|elaborate|rigorous|formal|"
+    r"why|how|explain|explains)\b",
+    re.IGNORECASE,
+)
 
-    if not OLLAMA_API_KEY:
-        return None, (
-            "The server is missing its model API key (OLLAMA_API_KEY). "
-            "Please set it in the deployment environment and try again."
+
+def route_engine(question, matched_count):
+    """Pick the preferred engine by scoring the question's 'hardness'.
+
+    Transparent and tunable: returns (engine_name, human_reason). ROUTE_MODE
+    can force a single engine; otherwise a score >= ROUTER_THRESHOLD routes to
+    the comprehensive (OpenAI) engine.
+    """
+    if ROUTE_MODE in ("standard", "comprehensive"):
+        return ROUTE_MODE, f"forced by ROUTE_MODE={ROUTE_MODE}"
+
+    reasons = []
+    score = 0
+
+    depth_hits = {m.lower() for m in _DEPTH_PATTERN.findall(question)}
+    if depth_hits:
+        contribution = min(len(depth_hits), 3)  # cap so common words don't run away
+        score += contribution
+        reasons.append(f"depth/compare terms {sorted(depth_hits)} (+{contribution})")
+
+    if matched_count >= 2:
+        score += 2
+        reasons.append("spans multiple papers (+2)")
+
+    words = len(re.findall(r"\w+", question))
+    if words >= 45:
+        score += 2
+        reasons.append("long question (+2)")
+    elif words >= 25:
+        score += 1
+        reasons.append("medium-length question (+1)")
+
+    if question.count("?") >= 2:
+        score += 1
+        reasons.append("multiple sub-questions (+1)")
+
+    engine = "comprehensive" if score >= ROUTER_THRESHOLD else "standard"
+    reason = f"score={score}/{ROUTER_THRESHOLD}: " + ("; ".join(reasons) or "no depth signals")
+    return engine, reason
+
+
+def _try_order(preferred):
+    """Ordered [(name, engine)] to attempt: preferred first, then any other
+    engine that has a key configured (so one engine can cover for the other)."""
+    engines = _engines()
+    names = [preferred] + [n for n in engines if n != preferred]
+    return [(n, engines[n]) for n in names if engines[n]["api_key"]]
+
+
+def answer_question(question):
+    """Full pipeline. Returns (answer, engine_used, error_message). Never raises."""
+    if not question or not question.strip():
+        return None, None, "Please enter a question."
+
+    if not any(e["api_key"] for e in _engines().values()):
+        return None, None, (
+            "The server has no model API key configured. Please set "
+            "OLLAMA_API_KEY (and optionally OPENAI_API_KEY) in the environment."
         )
 
     # Tier 1: always load the master file.
     try:
         master_text = fetch_file(MASTER_FILE)
     except requests.RequestException:
-        return None, (
+        return None, None, (
             "Couldn't load the core UAFT material right now. "
             "Please try again in a moment."
         )
 
     # Tier 2: include whole papers only when the question clearly matches.
+    matched = match_papers(question)
     paper_texts = []
     try:
-        for filename in match_papers(question):
+        for filename in matched:
             paper_texts.append(fetch_file(filename))
     except requests.RequestException:
         # If a supporting paper fails, fall back to the master file alone.
         paper_texts = []
 
-    # Send to the model.
-    try:
-        messages = build_messages(question, master_text, paper_texts)
-        answer = ask_model(messages)
-    except requests.Timeout:
-        return None, "The model took too long to respond. Please try again."
-    except requests.RequestException:
-        return None, (
-            "Couldn't reach the language model right now. "
-            "Please try again in a moment."
-        )
-    except (KeyError, ValueError):
-        return None, "The model returned an unexpected response. Please try again."
+    # Route to an engine, then try it — falling back to the other on failure.
+    preferred, reason = route_engine(question, len(matched))
+    app.logger.info("route %r -> %s [%s]", question[:80], preferred, reason)
 
-    if not answer:
-        return None, "The model returned an empty answer. Please try again."
-    return answer, None
+    order = _try_order(preferred)
+    if not order:
+        return None, None, (
+            "The selected model isn't configured. Please check the server's API keys."
+        )
+
+    last_error = "The model returned an empty answer. Please try again."
+    for name, engine in order:
+        try:
+            messages = build_messages(
+                question, master_text, paper_texts, thorough=(name == "comprehensive")
+            )
+            answer = _chat_completion(engine, messages)
+            if answer:
+                return answer, name, None
+        except requests.Timeout:
+            last_error = "The model took too long to respond. Please try again."
+        except requests.RequestException:
+            last_error = (
+                "Couldn't reach the language model right now. "
+                "Please try again in a moment."
+            )
+        except (KeyError, ValueError):
+            last_error = "The model returned an unexpected response. Please try again."
+        app.logger.warning("engine %s failed: %s", name, last_error)
+
+    return None, None, last_error
 
 
 # --- Routes ------------------------------------------------------------------
@@ -268,10 +387,11 @@ def index():
 def ask():
     data = request.get_json(silent=True) or {}
     question = (data.get("question") or "").strip()
-    answer, error = answer_question(question)
+    answer, engine, error = answer_question(question)
     if error:
         return jsonify({"error": error}), 200
-    return jsonify({"answer": answer}), 200
+    # 'engine' is included for optional/debug use; the UI shows only the answer.
+    return jsonify({"answer": answer, "engine": engine}), 200
 
 
 @app.route("/healthz")
