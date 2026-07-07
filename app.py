@@ -355,6 +355,7 @@ def answer_question(question):
 
     last_error = "The model returned an empty answer. Please try again."
     for name, engine in order:
+        detail = "empty answer"
         try:
             messages = build_messages(
                 question, master_text, paper_texts, thorough=(name == "comprehensive")
@@ -364,14 +365,26 @@ def answer_question(question):
                 return answer, name, None
         except requests.Timeout:
             last_error = "The model took too long to respond. Please try again."
-        except requests.RequestException:
+            detail = "timeout"
+        except requests.HTTPError as exc:
             last_error = (
                 "Couldn't reach the language model right now. "
                 "Please try again in a moment."
             )
-        except (KeyError, ValueError):
+            resp = exc.response
+            status = getattr(resp, "status_code", "?")
+            body = resp.text[:300] if resp is not None else str(exc)
+            detail = f"HTTP {status}: {body}"
+        except requests.RequestException as exc:
+            last_error = (
+                "Couldn't reach the language model right now. "
+                "Please try again in a moment."
+            )
+            detail = f"{type(exc).__name__}: {str(exc)[:200]}"
+        except (KeyError, ValueError) as exc:
             last_error = "The model returned an unexpected response. Please try again."
-        app.logger.warning("engine %s failed: %s", name, last_error)
+            detail = f"bad response shape: {type(exc).__name__}"
+        app.logger.warning("engine '%s' (model=%s) failed: %s", name, engine["model"], detail)
 
     return None, None, last_error
 
@@ -397,6 +410,34 @@ def ask():
 @app.route("/healthz")
 def healthz():
     return jsonify({"status": "ok"}), 200
+
+
+@app.route("/diag")
+def diag():
+    """Temporary diagnostic: pings each configured engine and reports the raw
+    outcome (no secrets) so we can see WHY an engine fails. Remove after setup."""
+    out = {}
+    for name, engine in _engines().items():
+        info = {
+            "has_key": bool(engine["api_key"]),
+            "model": engine["model"],
+            "base_url": engine["base_url"],
+        }
+        if engine["api_key"]:
+            try:
+                reply = _chat_completion(engine, [{"role": "user", "content": "ping"}])
+                info["ok"] = True
+                info["sample"] = reply[:60]
+            except requests.HTTPError as exc:
+                resp = exc.response
+                info["ok"] = False
+                info["status"] = getattr(resp, "status_code", None)
+                info["detail"] = resp.text[:400] if resp is not None else str(exc)
+            except requests.RequestException as exc:
+                info["ok"] = False
+                info["detail"] = f"{type(exc).__name__}: {str(exc)[:300]}"
+        out[name] = info
+    return jsonify(out), 200
 
 
 if __name__ == "__main__":
