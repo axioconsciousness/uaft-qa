@@ -412,34 +412,6 @@ def healthz():
     return jsonify({"status": "ok"}), 200
 
 
-@app.route("/diag")
-def diag():
-    """Temporary diagnostic: pings each configured engine and reports the raw
-    outcome (no secrets) so we can see WHY an engine fails. Remove after setup."""
-    out = {}
-    for name, engine in _engines().items():
-        info = {
-            "has_key": bool(engine["api_key"]),
-            "model": engine["model"],
-            "base_url": engine["base_url"],
-        }
-        if engine["api_key"]:
-            try:
-                reply = _chat_completion(engine, [{"role": "user", "content": "ping"}])
-                info["ok"] = True
-                info["sample"] = reply[:60]
-            except requests.HTTPError as exc:
-                resp = exc.response
-                info["ok"] = False
-                info["status"] = getattr(resp, "status_code", None)
-                info["detail"] = resp.text[:400] if resp is not None else str(exc)
-            except requests.RequestException as exc:
-                info["ok"] = False
-                info["detail"] = f"{type(exc).__name__}: {str(exc)[:300]}"
-        out[name] = info
-    return jsonify(out), 200
-
-
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
