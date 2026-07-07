@@ -31,6 +31,9 @@ PAPERS = [
     "second-pinch-point.md",
     "emotional-differentiation-the-emergence-of-consciousness-and-self.md",
     "emotional-compression-and-the-structural-inevitability-of-the-pinch-point.md",
+    "symmetry-as-appearance-of-asymmetry.md",
+    "quantum-differentiation-resonance.md",
+    "differentiation-boundary.md",
 ]
 
 # --- Model / API config (read from env; never hardcode the key) --------------
