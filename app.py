@@ -314,12 +314,12 @@ def _try_order(preferred):
 
 
 def answer_question(question):
-    """Full pipeline. Returns (answer, engine_used, error_message). Never raises."""
+    """Full pipeline. Returns (answer, engine_used, model, error_message). Never raises."""
     if not question or not question.strip():
-        return None, None, "Please enter a question."
+        return None, None, None, "Please enter a question."
 
     if not any(e["api_key"] for e in _engines().values()):
-        return None, None, (
+        return None, None, None, (
             "The server has no model API key configured. Please set "
             "OLLAMA_API_KEY (and optionally OPENAI_API_KEY) in the environment."
         )
@@ -328,7 +328,7 @@ def answer_question(question):
     try:
         master_text = fetch_file(MASTER_FILE)
     except requests.RequestException:
-        return None, None, (
+        return None, None, None, (
             "Couldn't load the core UAFT material right now. "
             "Please try again in a moment."
         )
@@ -349,7 +349,7 @@ def answer_question(question):
 
     order = _try_order(preferred)
     if not order:
-        return None, None, (
+        return None, None, None, (
             "The selected model isn't configured. Please check the server's API keys."
         )
 
@@ -362,7 +362,7 @@ def answer_question(question):
             )
             answer = _chat_completion(engine, messages)
             if answer:
-                return answer, name, None
+                return answer, name, engine["model"], None
         except requests.Timeout:
             last_error = "The model took too long to respond. Please try again."
             detail = "timeout"
@@ -386,7 +386,7 @@ def answer_question(question):
             detail = f"bad response shape: {type(exc).__name__}"
         app.logger.warning("engine '%s' (model=%s) failed: %s", name, engine["model"], detail)
 
-    return None, None, last_error
+    return None, None, None, last_error
 
 
 # --- Routes ------------------------------------------------------------------
@@ -400,11 +400,11 @@ def index():
 def ask():
     data = request.get_json(silent=True) or {}
     question = (data.get("question") or "").strip()
-    answer, engine, error = answer_question(question)
+    answer, engine, model, error = answer_question(question)
     if error:
         return jsonify({"error": error}), 200
-    # 'engine' is included for optional/debug use; the UI shows only the answer.
-    return jsonify({"answer": answer, "engine": engine}), 200
+    # 'engine' (kind) and 'model' (exact model id) drive the badge in the UI.
+    return jsonify({"answer": answer, "engine": engine, "model": model}), 200
 
 
 @app.route("/healthz")

@@ -166,10 +166,9 @@
     .engine-badge {
       display: inline-block;
       font-family: "Source Sans 3", system-ui, sans-serif;
-      font-size: 0.7rem;
+      font-size: 0.72rem;
       font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.06em;
+      letter-spacing: 0.02em;
       padding: 3px 11px;
       border-radius: 999px;
       margin-bottom: 14px;
@@ -348,12 +347,13 @@
       out.classList.remove("hidden");
     }
 
-    function showAnswer(markdown, engine) {
+    function showAnswer(markdown, engine, model) {
       out.className = "answer";
-      // Whitelist the engine value (never trust it for innerHTML directly).
+      // Colour by engine kind (whitelisted); label with the exact model id.
       const kind = engine === "comprehensive" ? "comprehensive" : "standard";
-      const label = kind === "comprehensive" ? "Comprehensive" : "Standard";
-      const badge = '<div class="engine-badge engine-' + kind + '">' + label + "</div>";
+      const fallback = kind === "comprehensive" ? "Comprehensive" : "Standard";
+      const text = escapeHtml(String(model || fallback));
+      const badge = '<div class="engine-badge engine-' + kind + '">' + text + "</div>";
       out.innerHTML = badge + renderMarkdown(markdown);
       out.classList.remove("hidden");
     }
@@ -377,7 +377,7 @@
         if (data.error) {
           showPlain(data.error, "error");
         } else {
-          showAnswer(data.answer || "", data.engine);
+          showAnswer(data.answer || "", data.engine, data.model);
         }
       } catch (err) {
         showPlain("Something went wrong reaching the server. Please try again.", "error");
