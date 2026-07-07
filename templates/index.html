@@ -162,6 +162,20 @@
       border-left: 3px solid #d8d6cf;
       color: var(--muted);
     }
+    /* Small badge showing which engine answered. */
+    .engine-badge {
+      display: inline-block;
+      font-family: "Source Sans 3", system-ui, sans-serif;
+      font-size: 0.7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      padding: 3px 11px;
+      border-radius: 999px;
+      margin-bottom: 14px;
+    }
+    .engine-badge.engine-standard { color: #4a6b57; background: #e9f1ec; }
+    .engine-badge.engine-comprehensive { color: var(--accent); background: #e4eef4; }
     .hidden { display: none; }
     footer {
       margin-top: 48px;
@@ -334,9 +348,13 @@
       out.classList.remove("hidden");
     }
 
-    function showAnswer(markdown) {
+    function showAnswer(markdown, engine) {
       out.className = "answer";
-      out.innerHTML = renderMarkdown(markdown);
+      // Whitelist the engine value (never trust it for innerHTML directly).
+      const kind = engine === "comprehensive" ? "comprehensive" : "standard";
+      const label = kind === "comprehensive" ? "Comprehensive" : "Standard";
+      const badge = '<div class="engine-badge engine-' + kind + '">' + label + "</div>";
+      out.innerHTML = badge + renderMarkdown(markdown);
       out.classList.remove("hidden");
     }
 
@@ -359,7 +377,7 @@
         if (data.error) {
           showPlain(data.error, "error");
         } else {
-          showAnswer(data.answer || "");
+          showAnswer(data.answer || "", data.engine);
         }
       } catch (err) {
         showPlain("Something went wrong reaching the server. Please try again.", "error");
