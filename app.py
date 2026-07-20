@@ -51,11 +51,22 @@ OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 OPENAI_BASE_URL = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
 OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-5.5")
 
-# Routing between the two engines:
-#   ROUTE_MODE = auto (default) | standard (always Gemma) | comprehensive (always OpenAI)
-#   ROUTER_THRESHOLD: higher = fewer questions sent to OpenAI (saves credits).
+# Deep engine: Kimi K3 (Moonshot), also OpenAI-compatible. Reserved for the
+# hardest questions. If KIMI_API_KEY is unset, routing collapses to the two
+# engines above and nothing else changes.
+KIMI_API_KEY = os.environ.get("KIMI_API_KEY")
+KIMI_BASE_URL = os.environ.get("KIMI_BASE_URL", "https://api.moonshot.ai/v1")
+KIMI_MODEL = os.environ.get("KIMI_MODEL", "kimi-k3")
+
+# Routing across the three engines, by question-hardness score band:
+#   score <  ROUTER_THRESHOLD       -> standard      (Gemma)
+#   score <  ROUTER_DEEP_THRESHOLD  -> comprehensive (OpenAI)
+#   score >= ROUTER_DEEP_THRESHOLD  -> deep          (Kimi K3)
+# Raise a threshold to send fewer questions to that tier (saves credits).
+# ROUTE_MODE = auto (default) | standard | comprehensive | deep  (forces one engine)
 ROUTE_MODE = os.environ.get("ROUTE_MODE", "auto").strip().lower()
 ROUTER_THRESHOLD = int(os.environ.get("ROUTER_THRESHOLD", "3"))
+ROUTER_DEEP_THRESHOLD = int(os.environ.get("ROUTER_DEEP_THRESHOLD", "6"))
 
 REQUEST_TIMEOUT = 120  # seconds, for the LLM call
 
@@ -219,7 +230,10 @@ def build_messages(question, master_text, paper_texts, thorough=False):
 # --- Engines + routing -------------------------------------------------------
 
 def _engines():
-    """The two engines. 'standard' = Gemma/Ollama, 'comprehensive' = OpenAI."""
+    """The three engines, cheapest first (fallback tries them in this order).
+
+    'standard' = Gemma/Ollama, 'comprehensive' = OpenAI, 'deep' = Kimi K3.
+    """
     return {
         "standard": {
             "base_url": OLLAMA_BASE_URL,
@@ -230,6 +244,11 @@ def _engines():
             "base_url": OPENAI_BASE_URL,
             "api_key": OPENAI_API_KEY,
             "model": OPENAI_MODEL,
+        },
+        "deep": {
+            "base_url": KIMI_BASE_URL,
+            "api_key": KIMI_API_KEY,
+            "model": KIMI_MODEL,
         },
     }
 
@@ -275,7 +294,7 @@ def route_engine(question, matched_count):
     can force a single engine; otherwise a score >= ROUTER_THRESHOLD routes to
     the comprehensive (OpenAI) engine.
     """
-    if ROUTE_MODE in ("standard", "comprehensive"):
+    if ROUTE_MODE in ("standard", "comprehensive", "deep"):
         return ROUTE_MODE, f"forced by ROUTE_MODE={ROUTE_MODE}"
 
     reasons = []
@@ -303,8 +322,17 @@ def route_engine(question, matched_count):
         score += 1
         reasons.append("multiple sub-questions (+1)")
 
-    engine = "comprehensive" if score >= ROUTER_THRESHOLD else "standard"
-    reason = f"score={score}/{ROUTER_THRESHOLD}: " + ("; ".join(reasons) or "no depth signals")
+    if score >= ROUTER_DEEP_THRESHOLD:
+        engine = "deep"
+    elif score >= ROUTER_THRESHOLD:
+        engine = "comprehensive"
+    else:
+        engine = "standard"
+    reason = (
+        f"score={score} (bands: <{ROUTER_THRESHOLD} standard, "
+        f"<{ROUTER_DEEP_THRESHOLD} comprehensive, else deep): "
+        + ("; ".join(reasons) or "no depth signals")
+    )
     return engine, reason
 
 
@@ -324,7 +352,8 @@ def answer_question(question):
     if not any(e["api_key"] for e in _engines().values()):
         return None, None, None, (
             "The server has no model API key configured. Please set "
-            "OLLAMA_API_KEY (and optionally OPENAI_API_KEY) in the environment."
+            "OLLAMA_API_KEY (and optionally OPENAI_API_KEY / KIMI_API_KEY) "
+            "in the environment."
         )
 
     # Tier 1: always load the master file.
@@ -361,7 +390,8 @@ def answer_question(question):
         detail = "empty answer"
         try:
             messages = build_messages(
-                question, master_text, paper_texts, thorough=(name == "comprehensive")
+                question, master_text, paper_texts,
+                thorough=(name in ("comprehensive", "deep")),
             )
             answer = _chat_completion(engine, messages)
             if answer:

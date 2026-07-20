@@ -20,24 +20,30 @@ and sends them to a cloud LLM (Gemma via Ollama Cloud's OpenAI-compatible API).
   filenames.
 - Source files are fetched over HTTPS and cached in memory after first fetch.
 
-## Two engines (standard + comprehensive)
+## Three engines (standard / comprehensive / deep)
 
-The app can use two LLMs and auto-route between them:
+The app can use three LLMs and auto-route between them by question difficulty:
 
-- **Standard** — Gemma via Ollama Cloud. Handles most questions.
-- **Comprehensive** — the real OpenAI API, used for harder questions.
+| Tier | Model | Score band |
+| --- | --- | --- |
+| **Standard** | Gemma via Ollama Cloud | below `ROUTER_THRESHOLD` (default < 3) |
+| **Comprehensive** | OpenAI | `ROUTER_THRESHOLD` … `ROUTER_DEEP_THRESHOLD` (3–5) |
+| **Deep** | Kimi K3 (Moonshot) | at/above `ROUTER_DEEP_THRESHOLD` (6+) |
 
-An **auto-router** scores each question for "hardness" (depth/comparison words
-like *compare, relationship, implications, derive, why, how*; whether it spans
-two papers; length; multiple sub-questions). If the score reaches
-`ROUTER_THRESHOLD`, the question goes to OpenAI; otherwise to Gemma. Both engines
-get the same grounded context and the same "answer only from the sources" rule
-(the comprehensive engine also gets a "be thorough" nudge). The router decision
-is logged server-side; the UI still shows only the clean answer.
+An **auto-router** scores each question for "hardness": depth/comparison words
+(*compare, relationship, implications, derive, why, how* — capped at +3), whether
+it spans two papers (+2), length (+1/+2), and multiple sub-questions (+1). Max
+score is 8. All engines get the same grounded context and the same "answer only
+from the sources" rule; the comprehensive and deep tiers also get a "be thorough"
+nudge. The router decision is logged server-side; the UI shows the answer plus a
+small badge naming the model that replied.
 
-If `OPENAI_API_KEY` is **not** set, the app behaves exactly as before (Gemma
-only). If a chosen engine fails, the app automatically falls back to the other
-configured engine before showing an error.
+Every engine is a plain OpenAI-compatible chat endpoint, so adding another
+provider is just another entry in `_engines()`.
+
+Tiers whose key is unset are simply skipped — with only `OLLAMA_API_KEY` set, the
+app behaves as a single-engine app. If a chosen engine fails, the app falls back
+to the other configured engines (cheapest first) before showing an error.
 
 ## Configuration
 
@@ -48,11 +54,15 @@ The app reads these environment variables (the API key is **never** hardcoded):
 | `OLLAMA_API_KEY` | yes* | — | Ollama Cloud API key (standard engine). Set it in the host's dashboard. |
 | `OLLAMA_MODEL` | no | `gemma4:31b-cloud` | Standard model tag. Override if the tag differs. |
 | `OLLAMA_BASE_URL` | no | `https://ollama.com/v1` | OpenAI-compatible base URL for Ollama Cloud. |
-| `OPENAI_API_KEY` | no | — | OpenAI API key (comprehensive engine). If unset, only the standard engine is used. |
+| `OPENAI_API_KEY` | no | — | OpenAI API key (comprehensive engine). If unset, that tier is skipped. |
 | `OPENAI_MODEL` | no | `gpt-5.5` | OpenAI model for hard questions. Set to e.g. `gpt-5.4-mini` to conserve credits. |
 | `OPENAI_BASE_URL` | no | `https://api.openai.com/v1` | OpenAI chat-completions base URL. |
-| `ROUTE_MODE` | no | `auto` | `auto`, `standard` (always Gemma), or `comprehensive` (always OpenAI). |
-| `ROUTER_THRESHOLD` | no | `3` | Hardness score needed to route to OpenAI. Higher = fewer OpenAI calls. |
+| `KIMI_API_KEY` | no | — | Moonshot/Kimi API key (deep engine). If unset, that tier is skipped. |
+| `KIMI_MODEL` | no | `kimi-k3` | Kimi model for the hardest questions. |
+| `KIMI_BASE_URL` | no | `https://api.moonshot.ai/v1` | Moonshot chat-completions base URL. |
+| `ROUTE_MODE` | no | `auto` | `auto`, or force one engine: `standard`, `comprehensive`, `deep`. |
+| `ROUTER_THRESHOLD` | no | `3` | Score at which routing moves up to the comprehensive tier. |
+| `ROUTER_DEEP_THRESHOLD` | no | `6` | Score at which routing moves up to the deep (Kimi) tier. |
 | `PORT` | no | `5000` | Port to listen on (set automatically by Render). |
 
 \* At least one engine key is required. `OLLAMA_API_KEY` alone reproduces the

@@ -13,6 +13,9 @@ services:
       # Comprehensive engine (OpenAI) — optional; enables auto-routing when set.
       - key: OPENAI_API_KEY
         sync: false
+      # Deep engine (Kimi K3 / Moonshot) — optional; top routing tier when set.
+      - key: KIMI_API_KEY
+        sync: false
       # Optional overrides — defaults live in app.py.
       - key: OLLAMA_MODEL
         sync: false
@@ -22,8 +25,14 @@ services:
         sync: false
       - key: OPENAI_BASE_URL
         sync: false
+      - key: KIMI_MODEL
+        sync: false
+      - key: KIMI_BASE_URL
+        sync: false
       - key: ROUTE_MODE
         sync: false
       - key: ROUTER_THRESHOLD
+        sync: false
+      - key: ROUTER_DEEP_THRESHOLD
         sync: false
     healthCheckPath: /healthz
