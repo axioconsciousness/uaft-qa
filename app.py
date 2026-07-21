@@ -58,6 +58,15 @@ KIMI_API_KEY = os.environ.get("KIMI_API_KEY")
 KIMI_BASE_URL = os.environ.get("KIMI_BASE_URL", "https://api.moonshot.ai/v1")
 KIMI_MODEL = os.environ.get("KIMI_MODEL", "kimi-k3")
 
+# Kimi K2.6 turns thinking mode ON by default, which pushed answers to ~150s.
+# "disabled" keeps the tier fast; "enabled" trades speed back for depth;
+# "default" omits the parameter (required for models where thinking is forced,
+# e.g. kimi-k2.7-code). Never send reasoning_effort alongside it — the API
+# rejects requests carrying both.
+KIMI_THINKING = os.environ.get("KIMI_THINKING", "disabled").strip().lower()
+# Cap the generated answer so a long completion can't dominate the wall clock.
+KIMI_MAX_TOKENS = int(os.environ.get("KIMI_MAX_TOKENS", "2000"))
+
 # Routing across the three engines, by question-hardness score band:
 #   score <  ROUTER_THRESHOLD       -> standard      (Gemma)
 #   score <  ROUTER_DEEP_THRESHOLD  -> comprehensive (OpenAI)
@@ -252,23 +261,37 @@ def _engines():
             "base_url": KIMI_BASE_URL,
             "api_key": KIMI_API_KEY,
             "model": KIMI_MODEL,
+            "extra": _kimi_extra(),
         },
     }
 
 
+def _kimi_extra():
+    """Kimi-specific request params that keep the deep tier fast."""
+    extra = {}
+    if KIMI_THINKING in ("disabled", "enabled"):
+        extra["thinking"] = {"type": KIMI_THINKING}
+    if KIMI_MAX_TOKENS > 0:
+        extra["max_completion_tokens"] = KIMI_MAX_TOKENS
+    return extra
+
+
 def _chat_completion(engine, messages):
     """Call any OpenAI-compatible chat endpoint (Ollama Cloud or OpenAI)."""
+    payload = {
+        "model": engine["model"],
+        "messages": messages,
+        "stream": False,
+    }
+    payload.update(engine.get("extra") or {})
+
     resp = requests.post(
         f"{engine['base_url'].rstrip('/')}/chat/completions",
         headers={
             "Authorization": f"Bearer {engine['api_key']}",
             "Content-Type": "application/json",
         },
-        json={
-            "model": engine["model"],
-            "messages": messages,
-            "stream": False,
-        },
+        json=payload,
         timeout=REQUEST_TIMEOUT,
     )
     resp.raise_for_status()
