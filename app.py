@@ -51,34 +51,16 @@ OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 OPENAI_BASE_URL = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
 OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-5.5")
 
-# Deep engine: Kimi K3 (Moonshot), also OpenAI-compatible. Reserved for the
-# hardest questions. If KIMI_API_KEY is unset, routing collapses to the two
-# engines above and nothing else changes.
-KIMI_API_KEY = os.environ.get("KIMI_API_KEY")
-KIMI_BASE_URL = os.environ.get("KIMI_BASE_URL", "https://api.moonshot.ai/v1")
-KIMI_MODEL = os.environ.get("KIMI_MODEL", "kimi-k3")
+# A third "deep" tier (Kimi K3/K2.6 via Moonshot) was trialled here and removed:
+# it answered in 110-170s versus ~8s for the models above, and no combination of
+# disabling thinking mode, capping output, or trimming input closed that gap.
+# Adding another provider is just another entry in _engines() if that changes.
 
-# Kimi K2.6 turns thinking mode ON by default, which pushed answers to ~150s.
-# "disabled" keeps the tier fast; "enabled" trades speed back for depth;
-# "default" omits the parameter (required for models where thinking is forced,
-# e.g. kimi-k2.7-code). Never send reasoning_effort alongside it — the API
-# rejects requests carrying both.
-KIMI_THINKING = os.environ.get("KIMI_THINKING", "disabled").strip().lower()
-# Cap the generated answer so a long completion can't dominate the wall clock.
-KIMI_MAX_TOKENS = int(os.environ.get("KIMI_MAX_TOKENS", "1500"))
-# The deep tier is the slowest, and input size dominates its latency (one paper
-# is 180KB). Give it fewer supporting papers than the faster tiers.
-DEEP_MAX_PAPERS = int(os.environ.get("DEEP_MAX_PAPERS", "1"))
-
-# Routing across the three engines, by question-hardness score band:
-#   score <  ROUTER_THRESHOLD       -> standard      (Gemma)
-#   score <  ROUTER_DEEP_THRESHOLD  -> comprehensive (OpenAI)
-#   score >= ROUTER_DEEP_THRESHOLD  -> deep          (Kimi K3)
-# Raise a threshold to send fewer questions to that tier (saves credits).
-# ROUTE_MODE = auto (default) | standard | comprehensive | deep  (forces one engine)
+# Routing between the two engines:
+#   ROUTE_MODE = auto (default) | standard (always Gemma) | comprehensive (always OpenAI)
+#   ROUTER_THRESHOLD: higher = fewer questions sent to OpenAI (saves credits).
 ROUTE_MODE = os.environ.get("ROUTE_MODE", "auto").strip().lower()
 ROUTER_THRESHOLD = int(os.environ.get("ROUTER_THRESHOLD", "3"))
-ROUTER_DEEP_THRESHOLD = int(os.environ.get("ROUTER_DEEP_THRESHOLD", "6"))
 
 # Seconds to wait on a single LLM call. Keep the gunicorn --timeout in the
 # start command comfortably ABOVE this, or the worker is killed mid-request
@@ -245,9 +227,9 @@ def build_messages(question, master_text, paper_texts, thorough=False):
 # --- Engines + routing -------------------------------------------------------
 
 def _engines():
-    """The three engines, cheapest first (fallback tries them in this order).
+    """The two engines, cheapest first (fallback tries them in this order).
 
-    'standard' = Gemma/Ollama, 'comprehensive' = OpenAI, 'deep' = Kimi K3.
+    'standard' = Gemma/Ollama, 'comprehensive' = OpenAI.
     """
     return {
         "standard": {
@@ -260,23 +242,7 @@ def _engines():
             "api_key": OPENAI_API_KEY,
             "model": OPENAI_MODEL,
         },
-        "deep": {
-            "base_url": KIMI_BASE_URL,
-            "api_key": KIMI_API_KEY,
-            "model": KIMI_MODEL,
-            "extra": _kimi_extra(),
-        },
     }
-
-
-def _kimi_extra():
-    """Kimi-specific request params that keep the deep tier fast."""
-    extra = {}
-    if KIMI_THINKING in ("disabled", "enabled"):
-        extra["thinking"] = {"type": KIMI_THINKING}
-    if KIMI_MAX_TOKENS > 0:
-        extra["max_completion_tokens"] = KIMI_MAX_TOKENS
-    return extra
 
 
 def _chat_completion(engine, messages):
@@ -342,7 +308,7 @@ def route_engine(question, matched_count):
     can force a single engine; otherwise a score >= ROUTER_THRESHOLD routes to
     the comprehensive (OpenAI) engine.
     """
-    if ROUTE_MODE in ("standard", "comprehensive", "deep"):
+    if ROUTE_MODE in ("standard", "comprehensive"):
         return ROUTE_MODE, f"forced by ROUTE_MODE={ROUTE_MODE}"
 
     reasons = []
@@ -370,17 +336,8 @@ def route_engine(question, matched_count):
         score += 1
         reasons.append("multiple sub-questions (+1)")
 
-    if score >= ROUTER_DEEP_THRESHOLD:
-        engine = "deep"
-    elif score >= ROUTER_THRESHOLD:
-        engine = "comprehensive"
-    else:
-        engine = "standard"
-    reason = (
-        f"score={score} (bands: <{ROUTER_THRESHOLD} standard, "
-        f"<{ROUTER_DEEP_THRESHOLD} comprehensive, else deep): "
-        + ("; ".join(reasons) or "no depth signals")
-    )
+    engine = "comprehensive" if score >= ROUTER_THRESHOLD else "standard"
+    reason = f"score={score}/{ROUTER_THRESHOLD}: " + ("; ".join(reasons) or "no depth signals")
     return engine, reason
 
 
@@ -400,8 +357,7 @@ def answer_question(question):
     if not any(e["api_key"] for e in _engines().values()):
         return None, None, None, (
             "The server has no model API key configured. Please set "
-            "OLLAMA_API_KEY (and optionally OPENAI_API_KEY / KIMI_API_KEY) "
-            "in the environment."
+            "OLLAMA_API_KEY (and optionally OPENAI_API_KEY) in the environment."
         )
 
     # Tier 1: always load the master file.
@@ -437,14 +393,9 @@ def answer_question(question):
     for name, engine in order:
         detail = "empty answer"
         try:
-            # The deep tier reads fewer papers: its latency is dominated by
-            # input size, and the master file already carries the framework.
-            engine_papers = (
-                paper_texts[:DEEP_MAX_PAPERS] if name == "deep" else paper_texts
-            )
             messages = build_messages(
-                question, master_text, engine_papers,
-                thorough=(name in ("comprehensive", "deep")),
+                question, master_text, paper_texts,
+                thorough=(name == "comprehensive"),
             )
             answer = _chat_completion(engine, messages)
             if answer:

@@ -20,23 +20,27 @@ and sends them to a cloud LLM (Gemma via Ollama Cloud's OpenAI-compatible API).
   filenames.
 - Source files are fetched over HTTPS and cached in memory after first fetch.
 
-## Three engines (standard / comprehensive / deep)
+## Two engines (standard / comprehensive)
 
-The app can use three LLMs and auto-route between them by question difficulty:
+The app can use two LLMs and auto-route between them by question difficulty:
 
 | Tier | Model | Score band |
 | --- | --- | --- |
 | **Standard** | Gemma via Ollama Cloud | below `ROUTER_THRESHOLD` (default < 3) |
-| **Comprehensive** | OpenAI | `ROUTER_THRESHOLD` … `ROUTER_DEEP_THRESHOLD` (3–5) |
-| **Deep** | Kimi K3 (Moonshot) | at/above `ROUTER_DEEP_THRESHOLD` (6+) |
+| **Comprehensive** | OpenAI | at/above `ROUTER_THRESHOLD` (3+) |
 
 An **auto-router** scores each question for "hardness": depth/comparison words
 (*compare, relationship, implications, derive, why, how* — capped at +3), whether
-it spans two papers (+2), length (+1/+2), and multiple sub-questions (+1). Max
-score is 8. All engines get the same grounded context and the same "answer only
-from the sources" rule; the comprehensive and deep tiers also get a "be thorough"
-nudge. The router decision is logged server-side; the UI shows the answer plus a
-small badge naming the model that replied.
+it spans two papers (+2), length (+1/+2), and multiple sub-questions (+1). Both
+engines get the same grounded context and the same "answer only from the sources"
+rule; the comprehensive tier also gets a "be thorough" nudge. The router decision
+is logged server-side; the UI shows the answer plus a small badge naming the
+model that replied.
+
+> A third "deep" tier using Kimi (K3, then K2.6 via Moonshot) was trialled and
+> removed: it answered in 110–170s against ~8s for the models above, and
+> disabling thinking mode, capping output tokens, and trimming input did not
+> close the gap. Adding a provider back is just another entry in `_engines()`.
 
 Every engine is a plain OpenAI-compatible chat endpoint, so adding another
 provider is just another entry in `_engines()`.
@@ -57,12 +61,9 @@ The app reads these environment variables (the API key is **never** hardcoded):
 | `OPENAI_API_KEY` | no | — | OpenAI API key (comprehensive engine). If unset, that tier is skipped. |
 | `OPENAI_MODEL` | no | `gpt-5.5` | OpenAI model for hard questions. Set to e.g. `gpt-5.4-mini` to conserve credits. |
 | `OPENAI_BASE_URL` | no | `https://api.openai.com/v1` | OpenAI chat-completions base URL. |
-| `KIMI_API_KEY` | no | — | Moonshot/Kimi API key (deep engine). If unset, that tier is skipped. |
-| `KIMI_MODEL` | no | `kimi-k3` | Kimi model for the hardest questions. |
-| `KIMI_BASE_URL` | no | `https://api.moonshot.ai/v1` | Moonshot chat-completions base URL. |
-| `ROUTE_MODE` | no | `auto` | `auto`, or force one engine: `standard`, `comprehensive`, `deep`. |
+| `ROUTE_MODE` | no | `auto` | `auto`, or force one engine: `standard`, `comprehensive`. |
 | `ROUTER_THRESHOLD` | no | `3` | Score at which routing moves up to the comprehensive tier. |
-| `ROUTER_DEEP_THRESHOLD` | no | `6` | Score at which routing moves up to the deep (Kimi) tier. |
+| `LLM_TIMEOUT` | no | `120` | Seconds to wait on one model call. Keep gunicorn's `--timeout` above this. |
 | `PORT` | no | `5000` | Port to listen on (set automatically by Render). |
 
 \* At least one engine key is required. `OLLAMA_API_KEY` alone reproduces the

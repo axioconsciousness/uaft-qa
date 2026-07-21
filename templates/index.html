@@ -175,7 +175,6 @@
     }
     .engine-badge.engine-standard { color: #4a6b57; background: #e9f1ec; }
     .engine-badge.engine-comprehensive { color: var(--accent); background: #e4eef4; }
-    .engine-badge.engine-deep { color: #63478c; background: #ece7f4; }
     .hidden { display: none; }
     footer {
       margin-top: 48px;
@@ -351,7 +350,7 @@
     function showAnswer(markdown, engine, model) {
       out.className = "answer";
       // Colour by engine kind (whitelisted); label with the exact model id.
-      const kinds = { standard: "Standard", comprehensive: "Comprehensive", deep: "Deep" };
+      const kinds = { standard: "Standard", comprehensive: "Comprehensive" };
       const kind = Object.prototype.hasOwnProperty.call(kinds, engine) ? engine : "standard";
       const fallback = kinds[kind];
       const text = escapeHtml(String(model || fallback));
