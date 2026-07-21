@@ -65,7 +65,10 @@ KIMI_MODEL = os.environ.get("KIMI_MODEL", "kimi-k3")
 # rejects requests carrying both.
 KIMI_THINKING = os.environ.get("KIMI_THINKING", "disabled").strip().lower()
 # Cap the generated answer so a long completion can't dominate the wall clock.
-KIMI_MAX_TOKENS = int(os.environ.get("KIMI_MAX_TOKENS", "2000"))
+KIMI_MAX_TOKENS = int(os.environ.get("KIMI_MAX_TOKENS", "1500"))
+# The deep tier is the slowest, and input size dominates its latency (one paper
+# is 180KB). Give it fewer supporting papers than the faster tiers.
+DEEP_MAX_PAPERS = int(os.environ.get("DEEP_MAX_PAPERS", "1"))
 
 # Routing across the three engines, by question-hardness score band:
 #   score <  ROUTER_THRESHOLD       -> standard      (Gemma)
@@ -434,8 +437,13 @@ def answer_question(question):
     for name, engine in order:
         detail = "empty answer"
         try:
+            # The deep tier reads fewer papers: its latency is dominated by
+            # input size, and the master file already carries the framework.
+            engine_papers = (
+                paper_texts[:DEEP_MAX_PAPERS] if name == "deep" else paper_texts
+            )
             messages = build_messages(
-                question, master_text, paper_texts,
+                question, master_text, engine_papers,
                 thorough=(name in ("comprehensive", "deep")),
             )
             answer = _chat_completion(engine, messages)
