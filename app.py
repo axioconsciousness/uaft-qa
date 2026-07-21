@@ -270,7 +270,26 @@ def _chat_completion(engine, messages):
     )
     resp.raise_for_status()
     data = resp.json()
-    return data["choices"][0]["message"]["content"].strip()
+
+    # Parse defensively: reasoning models may return null content, put the text
+    # under another key, or return content as a list of parts.
+    choices = data.get("choices") or []
+    if not choices:
+        raise ValueError(f"no choices in response; keys={sorted(data)}")
+    message = choices[0].get("message") or {}
+    content = message.get("content")
+
+    if isinstance(content, list):
+        content = "".join(
+            part.get("text", "")
+            for part in content
+            if isinstance(part, dict)
+        )
+    if not content:
+        content = message.get("reasoning_content") or message.get("reasoning") or ""
+    if not isinstance(content, str) or not content.strip():
+        raise ValueError(f"empty content; message keys={sorted(message)}")
+    return content.strip()
 
 
 # Words/phrases that signal a question wants depth, synthesis, or comparison.
@@ -414,9 +433,12 @@ def answer_question(question):
                 "Please try again in a moment."
             )
             detail = f"{type(exc).__name__}: {str(exc)[:200]}"
-        except (KeyError, ValueError) as exc:
+        except (KeyError, ValueError, TypeError, AttributeError, IndexError) as exc:
             last_error = "The model returned an unexpected response. Please try again."
-            detail = f"bad response shape: {type(exc).__name__}"
+            detail = f"bad response shape: {type(exc).__name__}: {str(exc)[:200]}"
+        except Exception as exc:  # last resort: one engine must never 500 the request
+            last_error = "Something went wrong reaching the model. Please try again."
+            detail = f"unexpected {type(exc).__name__}: {str(exc)[:200]}"
         app.logger.warning("engine '%s' (model=%s) failed: %s", name, engine["model"], detail)
 
     return None, None, None, last_error
