@@ -68,7 +68,10 @@ ROUTE_MODE = os.environ.get("ROUTE_MODE", "auto").strip().lower()
 ROUTER_THRESHOLD = int(os.environ.get("ROUTER_THRESHOLD", "3"))
 ROUTER_DEEP_THRESHOLD = int(os.environ.get("ROUTER_DEEP_THRESHOLD", "6"))
 
-REQUEST_TIMEOUT = 120  # seconds, for the LLM call
+# Seconds to wait on a single LLM call. Keep the gunicorn --timeout in the
+# start command comfortably ABOVE this, or the worker is killed mid-request
+# and returns an uncatchable 500 instead of falling back.
+REQUEST_TIMEOUT = int(os.environ.get("LLM_TIMEOUT", "120"))
 
 SYSTEM_PROMPT = (
     "You are a careful research assistant for the UAFT framework. "
