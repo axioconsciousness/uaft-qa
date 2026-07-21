@@ -4,10 +4,13 @@ services:
     runtime: python
     plan: free
     buildCommand: pip install -r requirements.txt
-    # --timeout must exceed the app's REQUEST_TIMEOUT (120s) so a slow model
-    # hits the app's own timeout + fallback instead of gunicorn killing the
-    # worker (which returns an uncatchable 500). Default is only 30s.
-    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --timeout 180 --graceful-timeout 30
+    # --workers/--threads matter as much as --timeout here. With the default
+    # single sync worker, one slow model call blocks the whole app, Render's
+    # health check times out after 5s, and Render restarts the instance
+    # mid-request (surfacing as a 502). The work is pure I/O waiting on model
+    # APIs, so threads are cheap. --timeout must also exceed REQUEST_TIMEOUT
+    # (default 120s), or the worker is killed instead of falling back.
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --threads 4 --timeout 180 --graceful-timeout 30
     envVars:
       # Set secret values in the Render dashboard (do not commit them).
       # Standard engine (Gemma via Ollama Cloud) — at least this key is required.

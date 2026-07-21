@@ -81,7 +81,7 @@ This repo includes `render.yaml`, so Render can deploy it as a Blueprint:
 3. Render builds with `pip install -r requirements.txt` and starts with:
 
    ```
-   gunicorn app:app --bind 0.0.0.0:$PORT --timeout 180 --graceful-timeout 30
+   gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --threads 4 --timeout 180 --graceful-timeout 30
    ```
 
    The app listens on the port Render provides via `PORT`.
